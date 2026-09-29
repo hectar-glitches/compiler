@@ -4,7 +4,7 @@ analogous to what torch.fx or an ONNX graph gives you, but simplified to
 exactly what we need.
 
 """
-
+from __future__ import annotations
 from dataclasses import dataclass, field
 
 
@@ -17,6 +17,7 @@ class Op:
     inputs: list[str]
     output: str
     shape: tuple[int, ]
+    fused_ops: list[Op] | None = None
     
 
 
