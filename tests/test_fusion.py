@@ -1,10 +1,5 @@
 """
-These tests assume the Op/Graph field names used in ir.py's hints
-(op_type, inputs, output, shape / ops, graph_inputs, graph_output), and
-assume a fused Op ends up with op_type == "fused_elementwise" with the
-sub-operations recorded somewhere on the Op (the tests below check for an
-attribute called `fused_ops` -- a list like ["add", "relu"] -- adjust if
-you named it differently, but be deliberate about the rename).
+These tests assume the Op/Graph field names used in ir.py's
 """
 
 import sys
@@ -50,9 +45,7 @@ def test_does_not_fuse_matmul_into_chain():
 
 
 def test_multi_consumer_blocks_fusion():
-    # h1 is consumed by BOTH relu (h2) and a second op (h3) -- add must
-    # NOT be fused into relu, because h1's value is needed independently
-    # by the second consumer.
+    # h1 is consumed by BOTH relu (h2) and a second op (h3)
     ops = [
         Op(op_type="add", inputs=["x", "b"], output="h1", shape=(4,)),
         Op(op_type="relu", inputs=["h1"], output="h2", shape=(4,)),
