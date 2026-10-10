@@ -1,11 +1,11 @@
 """
-End-to-end demo: trace a small model, run it through both the unfused and
+End-to-end demo: trace a model, run it through both the unfused and
 fused pipelines, verify identical numeric output, and report simulated
 cycle counts for each.
 
 Steps to implement:
 
-1. Build a small model (see examples/tiny_mlp.py -- sketch a couple of
+1. Build an example model (see examples/tiny_mlp.py, which defines a couple of
    Linear+ReLU layers there) and an example input tensor.
 2. `trace_model(model, example_input)` -> graph, tensor_values, tensor_shapes
 3. `lower_to_isa(graph, tensor_shapes)` -> unfused_instructions
@@ -26,35 +26,34 @@ import argparse
 import sys
 
 import numpy as np
+import torch
 
 from .codegen import lower_to_isa
 from .cost_model import HardwareConfig
-from .ir import Graph, Op
 from .passes.fusion import fuse_elementwise
 from .simulator import Simulator
+from .trace import trace_model
+from examples.tiny_mlp import TinyMLP
 
 
-def build_demo(size=1024):
-    shape = (size,)
-    graph = Graph(
-        ops=[
-            Op("add", ["x", "bias"], "hidden", shape),
-            Op("relu", ["hidden"], "output", shape),
-        ],
-        graph_inputs=["x", "bias"],
-        graph_output="output",
-    )
-    values = {
-        "x": np.linspace(-1.0, 1.0, size),
-        "bias": np.full(size, 0.25),
-    }
-    shapes = {"x": shape, "bias": shape, "hidden": shape, "output": shape}
-    return graph, values, shapes
+def build_demo(batch_size=1024):
+    torch.manual_seed(0)
+    model = TinyMLP().eval()
+    example_input = torch.linspace(
+        -1.0, 1.0, batch_size * 8, dtype=torch.float32
+    ).reshape(batch_size, 8)
+    return trace_model(model, example_input)
 
 
 def run_pair(graph, values, shapes, config):
-    unfused = lower_to_isa(graph, shapes)
-    fused = lower_to_isa(fuse_elementwise(graph), shapes)
+    unfused = lower_to_isa(
+        graph, shapes, on_chip_buffer_bytes=config.on_chip_buffer_bytes
+    )
+    fused = lower_to_isa(
+        fuse_elementwise(graph),
+        shapes,
+        on_chip_buffer_bytes=config.on_chip_buffer_bytes,
+    )
     unfused_memory, unfused_cycles = Simulator(config, values).run(unfused)
     fused_memory, fused_cycles = Simulator(config, values).run(fused)
     np.testing.assert_allclose(unfused_memory[graph.graph_output], fused_memory[graph.graph_output])
@@ -64,7 +63,7 @@ def run_pair(graph, values, shapes, config):
 def print_sweep(graph, values, shapes):
     print("\nBandwidth/buffer sweep (cycles, fused speedup):")
     for bandwidth in (0.5, 1.0, 2.0, 4.0):
-        for buffer_size in (64, 4096):
+        for buffer_size in (64, 192, 4096):
             config = HardwareConfig(
                 compute_flops_per_cycle=16.0,
                 memory_bandwidth_bytes_per_cycle=bandwidth,
