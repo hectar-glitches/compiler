@@ -1,6 +1,6 @@
-# mlacc — a tiny ML compiler for a  accelerator
+# mlacc — an ML compiler for an accelerator
 
-This is a small working simulator. It is deliberately a step up from a generic " LLVM compiler"
+This is a working simulator. It is deliberately a step up from a generic " LLVM compiler"
 project: it's shaped like what Annapurna Labs' Neuron SDK actually does —
 take a model graph and compile it down to run efficiently on fixed,
 custom hardware — not a generic teaching exercise.
@@ -20,7 +20,7 @@ PyTorch nn.Module
   Fused IR (fewer, larger ops)
       │  mlacc/codegen.py: lower each Op to -ISA instructions
       ▼
-  Instruction list (LOAD / STORE / COMPUTE, targeting a fake on-chip buffer)
+  Instruction list (LOAD / STORE / COMPUTE, targeting an on-chip buffer)
       │  mlacc/simulator.py: execute against a cost model
       ▼
   Actual output values + simulated cycle count
@@ -68,7 +68,7 @@ asserted in a README.
 6. **`mlacc/trace.py`** — only now, wire up `torch.fx.symbolic_trace` on
    a real `nn.Module` and convert its graph into your IR. This is the
    only stage that needs `pip install torch`.
-7. **`mlacc/main.py`** — CLI that runs a small model through the whole
+7. **`mlacc/main.py`** — CLI that runs a model through the whole
    pipeline twice (fused and unfused), confirms both produce the same
    numeric output, and reports the simulated cycle counts side by side.
 
@@ -107,28 +107,65 @@ python tests/test_simulator.py
 python tests/test_codegen.py
 ```
 
-The simulator and code generator are NumPy-only and can be run without
-PyTorch:
+The simulator and code generator are NumPy-only, while the end-to-end CLI
+uses the PyTorch FX front end:
 
 ```bash
 python -m mlacc.main --size 1024 --sweep
 ```
 
 The command prints the unfused and fused cycle counts, verifies that both
-schedules produce the same output, and sweeps sustained memory bandwidth.
-The current code generator uses a conservative policy that stores every
-operation result, so the configured buffer capacity is reported as a
-hardware parameter but does not yet trigger tiling. Buffer-capacity-aware
-tiling is listed below as a stretch goal.
+schedules produce the same output, and sweeps sustained memory bandwidth and
+buffer capacity. The current buffer model spills an output when the resident
+tensors exceed capacity; tiled execution remains a separate stretch goal.
 
-These don't need torch at all — they build `Graph`/instruction objects by
-hand. Only `mlacc/trace.py` and the final `main.py` demo need torch
-installed.
+The cycle estimator also has a C++/pybind11 implementation. Build it with:
+
+```bash
+python setup.py build_ext --inplace
+```
+
+`mlacc.native.estimate_cycles` accepts the same ISA instructions and hardware
+configuration as the Python simulator. The Python implementation remains the
+functional reference; the native backend accelerates cycle estimation.
+
+The native matmul ladder can be benchmarked with:
+
+```bash
+python -m mlacc.matmul_benchmark --m 256 --n 256 --k 256
+```
+
+It checks each implementation against NumPy before reporting timings for
+naive, tiled, and NEON matmul.
+
+Generate the roofline plot with:
+
+```bash
+python -m mlacc.roofline --output roofline.png \
+  --benchmark-output matmul_benchmark.png
+```
+
+The command generates two presentation plots from the same benchmark:
+
+![mlacc roofline plot](roofline.png)
+
+The roofline shows modeled `add`, `relu`, and `matmul` points, the compute and
+bandwidth ceilings, the ridge point, and measured native matmul points.
+
+![C++ matmul benchmark](matmul_benchmark.png)
+
+The benchmark chart shows execution time and achieved GFLOP/s for the C++
+matmul ladder. Results are local measurements on Apple Silicon; NumPy uses
+the platform's optimized Accelerate/BLAS implementation and is intentionally
+not included in the C++-only comparison chart.
+
+The unit tests build `Graph`/instruction objects directly. The FX front end
+and end-to-end CLI require PyTorch.
 
 ## What "done" looks like
 
 - All four test files pass.
-- `python -m mlacc.main` traces a small model (a couple of Linear+ReLU
+- `python -m mlacc.main` traces a model (a couple of Linear+ReLU
   layers — sketch one yourself in `examples/`), runs it through both the
   fused and unfused pipelines, confirms the numeric outputs match, and
   prints a simulated cycle count for each — with the fused version
@@ -144,7 +181,7 @@ installed.
 ## Stretch goals (only after the core pipeline works)
 
 - A basic memory-tiling pass: if an intermediate tensor is too big for
-  your fake on-chip buffer, split the computation into tiles that fit,
+  the on-chip buffer, split the computation into tiles that fit,
   and account for the extra LOAD/STORE traffic tiling introduces.
 - Fuse a `matmul` with a following `add` (bias) and `relu` into one
   "epilogue-fused" instruction — this is exactly what real ML compilers
