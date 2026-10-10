@@ -21,8 +21,8 @@ For each Op in the graph, in order:
        only one Compute instruction, so that intermediate Store+Load
        pair never exists at all.
 
-A reasonable simplification for a first pass: Store every op's output
-immediately after computing it (as if the on-chip buffer were tiny), and
+A conservative scheduling policy for the current pass: Store every op's output
+immediately after computing it, and
 Load whatever's needed before each op. This alone is enough to show
 fusion's benefit, since a fused op simply has fewer op boundaries and
 therefore fewer Store+Load pairs. A more realistic codegen would track
@@ -32,7 +32,8 @@ the simple version works and is tested.
 
 Function to implement:
 
-- `lower_to_isa(graph, tensor_shapes: dict[str, tuple], dtype_size: int = 4) -> list`
+- `lower_to_isa(graph, tensor_shapes: dict[str, tuple], dtype_size: int = 4,
+  on_chip_buffer_bytes: int | None = None) -> list`
     Returns the flat instruction list. `tensor_shapes` gives you the
     shape of every named tensor in the graph (inputs, intermediates, and
     output) so you can compute size_bytes and flops for each instruction.
@@ -59,35 +60,57 @@ def _flops(op_type, shape, input_shapes):
     raise ValueError(f"unsupported op type: {op_type}")
 
 
-def lower_to_isa(graph, tensor_shapes, dtype_size: int = 4):
+def lower_to_isa(
+    graph,
+    tensor_shapes,
+    dtype_size: int = 4,
+    on_chip_buffer_bytes: int | None = None,
+):
     if dtype_size <= 0:
         raise ValueError("dtype_size must be positive")
+    if on_chip_buffer_bytes is not None and on_chip_buffer_bytes <= 0:
+        raise ValueError("on_chip_buffer_bytes must be positive")
 
     instructions = []
     resident = set()
+    resident_bytes = 0
     for op in graph.ops:
         for name in op.inputs:
             if name not in tensor_shapes:
                 raise KeyError(f"missing shape for tensor {name!r}")
             if name not in resident:
-                instructions.append(Load(name, _numel(tensor_shapes[name]) * dtype_size))
+                size_bytes = _numel(tensor_shapes[name]) * dtype_size
+                instructions.append(Load(name, size_bytes))
                 resident.add(name)
+                resident_bytes += size_bytes
 
         shape = tensor_shapes.get(op.output, op.shape)
         input_shapes = [tensor_shapes[name] for name in op.inputs]
         sub_ops = op.fused_ops
         op_types = sub_ops or [op.op_type]
+        output_size_bytes = _numel(shape) * dtype_size
         flops = sum(_flops(kind, shape, input_shapes) for kind in op_types)
         instructions.append(
             Compute(
                 op_type=op.op_type,
                 input_names=list(op.inputs),
                 output_name=op.output,
-                output_size_bytes=_numel(shape) * dtype_size,
+                output_size_bytes=output_size_bytes,
                 flops=flops,
                 sub_ops=list(sub_ops) if sub_ops else None,
             )
         )
-        instructions.append(Store(op.output, _numel(shape) * dtype_size))
-        resident.discard(op.output)
+        resident.add(op.output)
+        resident_bytes += output_size_bytes
+
+        must_store = on_chip_buffer_bytes is None or op.output == graph.graph_output
+        if (
+            on_chip_buffer_bytes is not None
+            and resident_bytes > on_chip_buffer_bytes
+        ):
+            must_store = True
+        if must_store:
+            instructions.append(Store(op.output, output_size_bytes))
+            resident.discard(op.output)
+            resident_bytes -= output_size_bytes
     return instructions

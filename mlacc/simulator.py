@@ -13,8 +13,8 @@ Functions/classes to implement:
 
 - `Simulator` class:
     - holds an on-chip buffer, modeled as a dict[str, np.ndarray]
-    - holds a reference to "off-chip memory" -- for this  project, the
-      graph's initial input tensors and any weights, also just a dict
+    - holds a reference to "off-chip memory" -- for this project, the
+      graph's initial input tensors and any weights, represented as a dict
     - a running cycle counter
 
     - `run(instructions: list) -> tuple[dict, int]`
@@ -30,11 +30,11 @@ Functions/classes to implement:
             information -- op_type, or a list of op_types if fused -- to
             know which numpy ops to call), write the result into the
             on-chip buffer, add cycles per compute_flops_per_cycle.
-        Return the final off-chip memory contents (or just the graph's
+        Return the final off-chip memory contents (or the graph's
         output tensor) and the total cycle count.
 
-Think about where Compute actually gets the numpy function to run. One
-approach: a small dict mapping op_type strings ("add", "relu", "matmul")
+Compute dispatches from op_type strings ("add", "relu", "matmul")
+to NumPy implementations.
 to numpy-based implementations, that both codegen.py and simulator.py can
 share, so "what does the op X actually compute" is defined in exactly one
 place. For a fused Compute instruction (multiple op_types), apply them in
