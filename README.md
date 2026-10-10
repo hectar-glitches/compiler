@@ -1,8 +1,8 @@
-# mlacc — a tiny ML compiler for a toy accelerator
+# mlacc — a tiny ML compiler for a  accelerator
 
 This is a scaffold, not a working project. It's the structure, the design
 of the pipeline, and real tests you make pass by implementing the actual
-logic. This is deliberately a step up from a generic "toy LLVM compiler"
+logic. This is deliberately a step up from a generic " LLVM compiler"
 project: it's shaped like what Annapurna Labs' Neuron SDK actually does —
 take a model graph and compile it down to run efficiently on fixed,
 custom hardware — not a generic teaching exercise.
@@ -20,7 +20,7 @@ PyTorch nn.Module
       │  mlacc/passes/fusion.py: fuse elementwise op chains
       ▼
   Fused IR (fewer, larger ops)
-      │  mlacc/codegen.py: lower each Op to toy-ISA instructions
+      │  mlacc/codegen.py: lower each Op to -ISA instructions
       ▼
   Instruction list (LOAD / STORE / COMPUTE, targeting a fake on-chip buffer)
       │  mlacc/simulator.py: execute against a cost model
@@ -58,7 +58,7 @@ asserted in a README.
    all). Run `tests/test_fusion.py`. This is the stage with the most
    interesting design decisions — see the "fusion correctness" section
    below before you start.
-3. **`mlacc/isa.py`** and **`mlacc/cost_model.py`** — define your toy
+3. **`mlacc/isa.py`** and **`mlacc/cost_model.py`** — define your 
    instruction set and hardware parameters.
 4. **`mlacc/simulator.py`** — execute a hand-built instruction list
    against the cost model, both for correctness (real numpy arrays) and

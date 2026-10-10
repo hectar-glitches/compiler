@@ -13,7 +13,7 @@ Functions/classes to implement:
 
 - `Simulator` class:
     - holds an on-chip buffer, modeled as a dict[str, np.ndarray]
-    - holds a reference to "off-chip memory" -- for this toy project, the
+    - holds a reference to "off-chip memory" -- for this  project, the
       graph's initial input tensors and any weights, also just a dict
     - a running cycle counter
 
