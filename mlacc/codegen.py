@@ -1,11 +1,11 @@
 """
-Codegen: lower a Graph (fused or unfused -- this function shouldn't care
-which) into a flat list of ISA instructions (Load / Store / Compute).
+Lower an IR graph to a flat Load/Store/Compute instruction stream.
 
-This is where fusion's benefit actually gets realized as fewer
-instructions, not just a smaller op count in the IR. The key logic:
+Inputs are loaded when they are not resident. Outputs are retained while
+the configured buffer has capacity and are stored when capacity is exceeded
+or when they are the graph output.
 
-For each Op in the graph, in order:
+The lowering sequence for each operation is:
     1. For each of its inputs NOT already resident in your on-chip
        buffer model (track this as you emit instructions), emit a Load.
     2. Emit one Compute instruction for the op (a fused Op with multiple
@@ -21,22 +21,11 @@ For each Op in the graph, in order:
        only one Compute instruction, so that intermediate Store+Load
        pair never exists at all.
 
-A conservative scheduling policy for the current pass: Store every op's output
-immediately after computing it, and
-Load whatever's needed before each op. This alone is enough to show
-fusion's benefit, since a fused op simply has fewer op boundaries and
-therefore fewer Store+Load pairs. A more realistic codegen would track
-buffer occupancy and only Store when the buffer needs the space or when a
-later, non-adjacent op needs the value again -- worth attempting after
-the simple version works and is tested.
+With no capacity supplied, every result is stored immediately, providing a
+deterministic traffic baseline.
 
-Function to implement:
-
-- `lower_to_isa(graph, tensor_shapes: dict[str, tuple], dtype_size: int = 4,
-  on_chip_buffer_bytes: int | None = None) -> list`
-    Returns the flat instruction list. `tensor_shapes` gives you the
-    shape of every named tensor in the graph (inputs, intermediates, and
-    output) so you can compute size_bytes and flops for each instruction.
+The lowering function returns the instruction list and derives byte counts
+and FLOP estimates from tensor shapes.
 """
 
 import math

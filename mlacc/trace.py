@@ -1,41 +1,27 @@
 """
-Front-end: trace a real PyTorch nn.Module with torch.fx and convert its
-graph into our own IR (mlacc.ir.Graph).
+Convert a supported PyTorch module to the project IR with `torch.fx`.
 
-This is the ONLY module that needs `torch` installed -- everything else
-in this project (ir, passes, isa, cost_model, simulator, codegen) is pure
-Python + numpy, deliberately, so you can build and test the entire
-middle/back-end before touching torch at all.
+The converter supports `nn.Linear` and `nn.ReLU`. Each Linear becomes a
+matmul followed by a bias add; each ReLU becomes a relu operation.
 
-Read the torch.fx docs before starting:
-https://pytorch.org/docs/stable/fx.html
+The converter uses the traced module graph and parameter values to produce
+the compiler IR and simulator inputs.
 
-Sketch of what you need:
-
-1. `torch.fx.symbolic_trace(model)` gives you an `fx.GraphModule` whose
+`torch.fx.symbolic_trace(model)` produces an `fx.GraphModule` whose
    `.graph.nodes` you can iterate. Each node has an `op` (e.g.
    'call_module', 'call_function'), a `target`, and `args`.
-2. For a model made of `nn.Linear` and `nn.ReLU` layers (this
-   is the scope to aim for -- don't try to support arbitrary PyTorch
-   models), you need to map:
+The supported module mapping is:
    - a Linear layer's node -> a `matmul` Op (against its weight) followed
      by an `add` Op (its bias) in your IR
    - a ReLU layer's node -> a `relu` Op
-3. You'll need the actual weight/bias tensor VALUES (not just shapes) out
-   of the traced module, since the simulator needs real numbers to
-   compute against. `model.state_dict()` or iterating `model.named_parameters()`
-   on the original (untraced) module is the simplest way to get these.
-4. Track tensor shapes as you go (input shape is whatever you decide to
-   trace with a concrete example input) -- codegen needs a shape for
-   every tensor.
+The converter copies weight and bias values into the simulator inputs and
+records concrete shapes for every tensor.
 
-Function to implement:
+Public interface:
 
-- `trace_model(model, example_input) -> tuple[Graph, dict[str, "np.ndarray"], dict[str, tuple]]`
-    Returns: the IR graph, a dict of tensor_name -> numpy array for every
-    tensor with a known concrete value at trace time (inputs + all
-    weights/biases), and a dict of tensor_name -> shape for every tensor
-    in the graph (including intermediates, which codegen needs).
+`trace_model(model, example_input)` returns the IR graph, NumPy values for
+the input and parameters, and concrete shapes for every tensor required by
+code generation.
 """
 
 from .ir import Graph, Op

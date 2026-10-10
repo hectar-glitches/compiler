@@ -1,9 +1,10 @@
 # mlacc — an ML compiler for an accelerator
 
-This is a working simulator. It is deliberately a step up from a generic " LLVM compiler"
-project: it's shaped like what Annapurna Labs' Neuron SDK actually does —
-take a model graph and compile it down to run efficiently on fixed,
-custom hardware — not a generic teaching exercise.
+This project traces a model graph, applies compiler transformations, lowers
+the result to a Load/Store/Compute instruction set, and evaluates execution
+with functional simulation and a hardware cost model. Its structure follows
+the compiler stages used by ML accelerator software, including graph
+rewriting, code generation, buffer management, and performance analysis.
 
 ## The pipeline
 
@@ -47,15 +48,14 @@ usually the actual bottleneck on ML accelerators, not compute throughput.
 Your cost model and simulator need to make this trade-off real, not just
 asserted in a README.
 
-## Suggested build order
+## Pipeline components
 
 1. **`mlacc/ir.py`** — define `Op` and `Graph`. No dependencies. Run
    `tests/test_ir.py`.
 2. **`mlacc/passes/fusion.py`** — implement the elementwise-fusion pass
    over hand-built `Graph` objects (no torch needed for this stage at
    all). Run `tests/test_fusion.py`. This is the stage with the most
-   interesting design decisions — see the "fusion correctness" section
-   below before you start.
+   design constraints described in the "Fusion correctness" section.
 3. **`mlacc/isa.py`** and **`mlacc/cost_model.py`** — define your 
    instruction set and hardware parameters.
 4. **`mlacc/simulator.py`** — execute a hand-built instruction list
@@ -65,37 +65,31 @@ asserted in a README.
    list of ISA instructions, managing what's resident in the on-chip
    buffer vs. what needs a LOAD/STORE. Run `tests/test_codegen.py` — this
    is the test that actually proves fusion reduces memory traffic.
-6. **`mlacc/trace.py`** — only now, wire up `torch.fx.symbolic_trace` on
-   a real `nn.Module` and convert its graph into your IR. This is the
-   only stage that needs `pip install torch`.
+6. **`mlacc/trace.py`** — use `torch.fx.symbolic_trace` on a real
+   `nn.Module` and convert its graph into the project IR.
 7. **`mlacc/main.py`** — CLI that runs a model through the whole
    pipeline twice (fused and unfused), confirms both produce the same
    numeric output, and reports the simulated cycle counts side by side.
 
-## Fusion correctness — read this before writing `fusion.py`
+## Fusion correctness
 
-The naive version of "fuse adjacent elementwise ops" is wrong in at least
-two ways that your tests will check for:
+Fusion observes two constraints:
 
 - **Multi-consumer producers.** If op A's output feeds both op B and some
   other op C, you generally can't fuse A into B alone — B would still
   need A's result available separately for C. A real compiler either
-  refuses to fuse this case or duplicates the computation; for this
-  project, refusing to fuse (and explaining why in a comment) is the
-  right scope.
+  refuses to fuse this case rather than duplicating the computation.
 - **Non-elementwise ops break the chain.** `matmul` is not elementwise
   (each output element depends on many input elements, not just the
-  corresponding ones) — you cannot fuse a `matmul` into an elementwise
-  chain the same way you fuse `add` into `relu`. Get this distinction
-  right in your `Op` design (e.g. a `is_elementwise` flag or a fixed set)
-  before you start the fusion pass itself.
+  corresponding ones) — `matmul` remains a boundary between elementwise
+  chains.
 
 ## Setup
 
 ```bash
 python3 -m venv venv
 source venv/bin/activate
-pip install torch numpy   # torch only needed once you reach trace.py
+pip install -r requirements.txt
 ```
 
 ## Running tests as you go
@@ -162,32 +156,21 @@ not included in the C++-only comparison chart.
 The unit tests build `Graph`/instruction objects directly. The FX front end
 and end-to-end CLI require PyTorch.
 
-## What "done" looks like
+## Implemented artifacts
 
-- All four test files pass.
-- `python -m mlacc.main` traces a model (a couple of Linear+ReLU
-  layers — sketch one yourself in `examples/`), runs it through both the
-  fused and unfused pipelines, confirms the numeric outputs match, and
-  prints a simulated cycle count for each — with the fused version
-  showing measurably fewer cycles because of reduced off-chip traffic.
-- You can explain, without looking at your code: why matmul can't be
-  fused the same way as elementwise ops, why multi-consumer producers
-  block fusion, and specifically which cost-model parameter (compute
-  throughput vs. memory bandwidth) is actually responsible for the
-  speedup you measure. If your speedup comes from the wrong parameter,
-  your cost model doesn't reflect reality yet — go fix it, don't just
-  report the number.
+- PyTorch FX tracing for `Linear` and `ReLU` models.
+- Elementwise fusion with multi-consumer and non-elementwise safety checks.
+- Load/Store/Compute code generation with buffer-aware spilling.
+- Functional NumPy simulation and configurable cycle modeling.
+- A C++ cycle estimator exposed through pybind11.
+- Naive, tiled, and NEON matmul kernels with NumPy correctness checks.
+- A roofline model and benchmark visualizations in `roofline.png` and
+  `matmul_benchmark.png`.
 
-## Stretch goals (only after the core pipeline works)
+## Current boundaries
 
-- A basic memory-tiling pass: if an intermediate tensor is too big for
-  the on-chip buffer, split the computation into tiles that fit,
-  and account for the extra LOAD/STORE traffic tiling introduces.
-- Fuse a `matmul` with a following `add` (bias) and `relu` into one
-  "epilogue-fused" instruction — this is exactly what real ML compilers
-  do (bias+activation fused into a GEMM epilogue), and is a natural next
-  step once plain elementwise fusion works.
-- Model a second hardware config (e.g. lower memory bandwidth, more
-  compute units) and show the *same* fusion pass gives a different
-  relative speedup — proving you understand fusion's benefit is
-  bandwidth-bound, not free.
+- The simulator test suite has one pre-existing semantic mismatch: one test
+  describes `relu(x - 10)` but emits `relu(x)`.
+- Buffer-aware spilling is implemented; tiled execution is not.
+- The modeled roofline uses explicit assumptions from `HardwareConfig`; it is
+  not a measurement of the host CPU's peak performance.
