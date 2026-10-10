@@ -117,7 +117,8 @@ python tests/test_codegen.py
 python main.py
 ```
 
-## Stretch goals
+The simulator and code generator are NumPy-only, while the end-to-end CLI
+uses the PyTorch FX front end:
 
 - A memory tiling pass, applying the same traffic-reduction idea within a
   single op rather than across a chain of ops
@@ -128,7 +129,80 @@ python main.py
 
 ## Background reading
 
-- The TVM paper (the closest single reference for the IR/schedule split
-  used here)
-- *Programming Massively Parallel Processors* (Kirk & Hwu)
-- *Computer Architecture: A Quantitative Approach*
+The command prints the unfused and fused cycle counts, verifies that both
+schedules produce the same output, and sweeps sustained memory bandwidth and
+buffer capacity. The current buffer model spills an output when the resident
+tensors exceed capacity; tiled execution remains a separate stretch goal.
+
+The cycle estimator also has a C++/pybind11 implementation. Build it with:
+
+```bash
+python setup.py build_ext --inplace
+```
+
+`mlacc.native.estimate_cycles` accepts the same ISA instructions and hardware
+configuration as the Python simulator. The Python implementation remains the
+functional reference; the native backend accelerates cycle estimation.
+
+The native matmul ladder can be benchmarked with:
+
+```bash
+python -m mlacc.matmul_benchmark --m 256 --n 256 --k 256
+```
+
+It checks each implementation against NumPy before reporting timings for
+naive, tiled, and NEON matmul.
+
+Generate the roofline plot with:
+
+```bash
+python -m mlacc.roofline --output roofline.png \
+  --benchmark-output matmul_benchmark.png
+```
+
+The command generates two presentation plots from the same benchmark:
+
+![mlacc roofline plot](roofline.png)
+
+The roofline shows modeled `add`, `relu`, and `matmul` points, the compute and
+bandwidth ceilings, the ridge point, and measured native matmul points.
+
+![C++ matmul benchmark](matmul_benchmark.png)
+
+The benchmark chart shows execution time and achieved GFLOP/s for the C++
+matmul ladder. Results are local measurements on Apple Silicon; NumPy uses
+the platform's optimized Accelerate/BLAS implementation and is intentionally
+not included in the C++-only comparison chart.
+
+The unit tests build `Graph`/instruction objects directly. The FX front end
+and end-to-end CLI require PyTorch.
+
+## What "done" looks like
+
+- All four test files pass.
+- `python -m mlacc.main` traces a model (a couple of Linear+ReLU
+  layers — sketch one yourself in `examples/`), runs it through both the
+  fused and unfused pipelines, confirms the numeric outputs match, and
+  prints a simulated cycle count for each — with the fused version
+  showing measurably fewer cycles because of reduced off-chip traffic.
+- You can explain, without looking at your code: why matmul can't be
+  fused the same way as elementwise ops, why multi-consumer producers
+  block fusion, and specifically which cost-model parameter (compute
+  throughput vs. memory bandwidth) is actually responsible for the
+  speedup you measure. If your speedup comes from the wrong parameter,
+  your cost model doesn't reflect reality yet — go fix it, don't just
+  report the number.
+
+## Stretch goals (only after the core pipeline works)
+
+- A basic memory-tiling pass: if an intermediate tensor is too big for
+  the on-chip buffer, split the computation into tiles that fit,
+  and account for the extra LOAD/STORE traffic tiling introduces.
+- Fuse a `matmul` with a following `add` (bias) and `relu` into one
+  "epilogue-fused" instruction — this is exactly what real ML compilers
+  do (bias+activation fused into a GEMM epilogue), and is a natural next
+  step once plain elementwise fusion works.
+- Model a second hardware config (e.g. lower memory bandwidth, more
+  compute units) and show the *same* fusion pass gives a different
+  relative speedup — proving you understand fusion's benefit is
+  bandwidth-bound, not free.
