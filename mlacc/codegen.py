@@ -38,8 +38,56 @@ Function to implement:
     output) so you can compute size_bytes and flops for each instruction.
 """
 
-from .ir import Graph  # noqa: F401
+import math
+
+from .ir import Graph
+from .isa import Compute, Load, Store
+
+
+def _numel(shape):
+    return math.prod(shape)
+
+
+def _flops(op_type, shape, input_shapes):
+    elements = _numel(shape)
+    if op_type == "matmul":
+        if len(input_shapes) != 2 or len(input_shapes[0]) != 2 or len(input_shapes[1]) != 2:
+            raise ValueError("matmul requires two rank-2 inputs")
+        return 2 * input_shapes[0][0] * input_shapes[0][1] * input_shapes[1][1]
+    if op_type in {"add", "mul", "relu"}:
+        return elements
+    raise ValueError(f"unsupported op type: {op_type}")
 
 
 def lower_to_isa(graph, tensor_shapes, dtype_size: int = 4):
-    raise NotImplementedError("implement me")
+    if dtype_size <= 0:
+        raise ValueError("dtype_size must be positive")
+
+    instructions = []
+    resident = set()
+    for op in graph.ops:
+        for name in op.inputs:
+            if name not in tensor_shapes:
+                raise KeyError(f"missing shape for tensor {name!r}")
+            if name not in resident:
+                instructions.append(Load(name, _numel(tensor_shapes[name]) * dtype_size))
+                resident.add(name)
+
+        shape = tensor_shapes.get(op.output, op.shape)
+        input_shapes = [tensor_shapes[name] for name in op.inputs]
+        sub_ops = op.fused_ops
+        op_types = sub_ops or [op.op_type]
+        flops = sum(_flops(kind, shape, input_shapes) for kind in op_types)
+        instructions.append(
+            Compute(
+                op_type=op.op_type,
+                input_names=list(op.inputs),
+                output_name=op.output,
+                output_size_bytes=_numel(shape) * dtype_size,
+                flops=flops,
+                sub_ops=list(sub_ops) if sub_ops else None,
+            )
+        )
+        instructions.append(Store(op.output, _numel(shape) * dtype_size))
+        resident.discard(op.output)
+    return instructions

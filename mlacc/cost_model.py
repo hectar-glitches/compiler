@@ -41,6 +41,17 @@ from dataclasses import dataclass
 
 @dataclass
 class HardwareConfig:
-    pass
-    # TODO: compute_flops_per_cycle, memory_bandwidth_bytes_per_cycle,
-    # fixed_memory_latency_cycles, on_chip_buffer_bytes
+    compute_flops_per_cycle: float = 16.0
+    memory_bandwidth_bytes_per_cycle: float = 1.0
+    fixed_memory_latency_cycles: float = 10.0
+    on_chip_buffer_bytes: int = 4096
+
+    def __post_init__(self):
+        if self.compute_flops_per_cycle <= 0:
+            raise ValueError("compute_flops_per_cycle must be positive")
+        if self.memory_bandwidth_bytes_per_cycle <= 0:
+            raise ValueError("memory_bandwidth_bytes_per_cycle must be positive")
+        if self.fixed_memory_latency_cycles < 0:
+            raise ValueError("fixed_memory_latency_cycles must be non-negative")
+        if self.on_chip_buffer_bytes <= 0:
+            raise ValueError("on_chip_buffer_bytes must be positive")

@@ -22,11 +22,82 @@ for both versions, side by side, since "fewer Load/Store instructions" is
 the concrete, inspectable evidence behind the cycle-count claim.
 """
 
+import argparse
 import sys
+
+import numpy as np
+
+from .codegen import lower_to_isa
+from .cost_model import HardwareConfig
+from .ir import Graph, Op
+from .passes.fusion import fuse_elementwise
+from .simulator import Simulator
+
+
+def build_demo(size=1024):
+    shape = (size,)
+    graph = Graph(
+        ops=[
+            Op("add", ["x", "bias"], "hidden", shape),
+            Op("relu", ["hidden"], "output", shape),
+        ],
+        graph_inputs=["x", "bias"],
+        graph_output="output",
+    )
+    values = {
+        "x": np.linspace(-1.0, 1.0, size),
+        "bias": np.full(size, 0.25),
+    }
+    shapes = {"x": shape, "bias": shape, "hidden": shape, "output": shape}
+    return graph, values, shapes
+
+
+def run_pair(graph, values, shapes, config):
+    unfused = lower_to_isa(graph, shapes)
+    fused = lower_to_isa(fuse_elementwise(graph), shapes)
+    unfused_memory, unfused_cycles = Simulator(config, values).run(unfused)
+    fused_memory, fused_cycles = Simulator(config, values).run(fused)
+    np.testing.assert_allclose(unfused_memory[graph.graph_output], fused_memory[graph.graph_output])
+    return unfused, unfused_cycles, fused, fused_cycles
+
+
+def print_sweep(graph, values, shapes):
+    print("\nBandwidth/buffer sweep (cycles, fused speedup):")
+    for bandwidth in (0.5, 1.0, 2.0, 4.0):
+        for buffer_size in (64, 4096):
+            config = HardwareConfig(
+                compute_flops_per_cycle=16.0,
+                memory_bandwidth_bytes_per_cycle=bandwidth,
+                fixed_memory_latency_cycles=10.0,
+                on_chip_buffer_bytes=buffer_size,
+            )
+            _, unfused_cycles, _, fused_cycles = run_pair(graph, values, shapes, config)
+            print(
+                f"  bandwidth={bandwidth:>3.1f} B/cycle, buffer={buffer_size:>4} B: "
+                f"{unfused_cycles:>7g} -> {fused_cycles:>7g} "
+                f"({unfused_cycles / fused_cycles:.2f}x)"
+            )
 
 
 def main(argv: list[str] | None = None) -> int:
-    raise NotImplementedError("implement me")
+    parser = argparse.ArgumentParser(description="Run the mlacc fusion simulator")
+    parser.add_argument("--size", type=int, default=1024)
+    parser.add_argument("--sweep", action="store_true")
+    args = parser.parse_args(argv)
+    if args.size <= 0:
+        parser.error("--size must be positive")
+
+    graph, values, shapes = build_demo(args.size)
+    config = HardwareConfig()
+    unfused, unfused_cycles, fused, fused_cycles = run_pair(
+        graph, values, shapes, config
+    )
+    print(f"unfused: {len(unfused)} instructions, {unfused_cycles:g} cycles")
+    print(f"fused:   {len(fused)} instructions, {fused_cycles:g} cycles")
+    print(f"speedup: {unfused_cycles / fused_cycles:.2f}x")
+    if args.sweep:
+        print_sweep(graph, values, shapes)
+    return 0
 
 
 if __name__ == "__main__":

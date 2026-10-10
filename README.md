@@ -1,8 +1,6 @@
 # mlacc — a tiny ML compiler for a  accelerator
 
-This is a scaffold, not a working project. It's the structure, the design
-of the pipeline, and real tests you make pass by implementing the actual
-logic. This is deliberately a step up from a generic " LLVM compiler"
+This is a small working simulator. It is deliberately a step up from a generic " LLVM compiler"
 project: it's shaped like what Annapurna Labs' Neuron SDK actually does —
 take a model graph and compile it down to run efficiently on fixed,
 custom hardware — not a generic teaching exercise.
@@ -108,6 +106,20 @@ python tests/test_fusion.py
 python tests/test_simulator.py
 python tests/test_codegen.py
 ```
+
+The simulator and code generator are NumPy-only and can be run without
+PyTorch:
+
+```bash
+python -m mlacc.main --size 1024 --sweep
+```
+
+The command prints the unfused and fused cycle counts, verifies that both
+schedules produce the same output, and sweeps sustained memory bandwidth.
+The current code generator uses a conservative policy that stores every
+operation result, so the configured buffer capacity is reported as a
+hardware parameter but does not yet trigger tiling. Buffer-capacity-aware
+tiling is listed below as a stretch goal.
 
 These don't need torch at all — they build `Graph`/instruction objects by
 hand. Only `mlacc/trace.py` and the final `main.py` demo need torch
