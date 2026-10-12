@@ -35,8 +35,8 @@ def run_benchmark(m, n, k, repeats, tile_size):
     print(f"{'implementation':<16} {'ms':>12} {'vs numpy':>12}")
     print(f"{'numpy':<16} {numpy_time * 1000:>12.3f} {1.0:>12.2f}x")
     for name, function in implementations:
+        np.testing.assert_allclose(function(a, b), reference, rtol=1e-4, atol=1e-4)
         result, elapsed = _benchmark(function, a, b, repeats)
-        np.testing.assert_allclose(result, reference, rtol=1e-4, atol=1e-4)
         print(
             f"{name:<16} {elapsed * 1000:>12.3f} "
             f"{numpy_time / elapsed:>12.2f}x"

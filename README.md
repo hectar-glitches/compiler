@@ -54,6 +54,11 @@ Cost model:
 - `Load` / `Store`: `size_bytes / memory_bandwidth_bytes_per_cycle + fixed_memory_latency_cycles`
 - `Compute`: `flops / compute_flops_per_cycle`
 
+The default `HardwareConfig` is 16 FLOP/cycle, 1 byte/cycle of memory
+bandwidth, 10 cycles of fixed memory latency, and a 4096-byte on-chip
+buffer. On the traced 2-layer MLP, this produces 536,048 unfused cycles and
+372,168 fused cycles, a 30.6% reduction.
+
 Fusion's effect on this model is direct: a fused chain of *N* elementwise ops
 replaces *N* separate Store+Load round trips to off-chip memory with a
 single Store and a single Load around the whole chain. Compute cost is
@@ -132,15 +137,27 @@ uses the PyTorch FX front end:
   single op rather than across a chain of ops
 - Matmul + bias + relu epilogue fusion, a pattern used in real inference
   kernels
-- A second `HardwareConfig` with a different compute-to-bandwidth ratio, to
-  show the regime where fusion's benefit shrinks or disappears
+- A configurable `HardwareConfig` sweep showing how fusion's benefit changes
+  as memory bandwidth increases
 
 ## Background reading
 
 The command prints the unfused and fused cycle counts, verifies that both
 schedules produce the same output, and sweeps sustained memory bandwidth and
 buffer capacity. The current buffer model spills an output when the resident
-tensors exceed capacity; tiled execution remains a separate stretch goal.
+tensors exceed capacity; tiled execution is not part of this simulator.
+
+The measured bandwidth sweep for the traced MLP was:
+
+| Bandwidth | Unfused cycles | Fused cycles | Speedup |
+|---:|---:|---:|---:|
+| 0.5 B/cycle | 1,044,800 | 717,080 | 1.46x |
+| 1.0 B/cycle | 536,048 | 372,168 | 1.44x |
+| 2.0 B/cycle | 281,672 | 199,712 | 1.41x |
+| 4.0 B/cycle | 154,484 | 113,484 | 1.36x |
+
+The 64-, 192-, and 4096-byte buffer settings produced the same values for
+this workload because its intermediate tensors exceed those capacities.
 
 The cycle estimator also has a C++/pybind11 implementation. Build it with:
 
