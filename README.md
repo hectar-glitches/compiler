@@ -200,10 +200,12 @@ python benchmarks/flash_attention_bench.py \
 ```
 
 The script compares explicitly materialized attention against
-`torch.nn.functional.scaled_dot_product_attention`, records median latency and
-peak allocated GPU memory, verifies the outputs, and writes the GPU,
-PyTorch/CUDA versions, tensor dimensions, dtype, warmup count, and repeat
-count into the CSV. Sequence lengths that exceed the available GPU memory are
+`torch.nn.functional.scaled_dot_product_attention`, runs both non-causal and
+causal modes by default, and reports median latency, peak allocated GPU
+memory, and achieved TFLOP/s using `4 * batch * heads * sequence_length^2 *
+head_dim` FLOPs. It verifies the outputs and writes the GPU, PyTorch/CUDA
+versions, tensor dimensions, dtype, warmup count, repeat count, and causal
+mode into the CSV. Sequence lengths that exceed the available GPU memory are
 recorded as `oom` instead of terminating the whole sweep.
 
 The unit tests build `Graph`/instruction objects directly. The FX front end

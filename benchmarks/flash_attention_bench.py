@@ -25,6 +25,22 @@ def materialized_attention(query, key, value):
     return torch.matmul(probabilities, value)
 
 
+def materialized_attention_causal(query, key, value):
+    scale = query.shape[-1] ** -0.5
+    scores = torch.matmul(query, key.transpose(-2, -1)) * scale
+    sequence_length = scores.shape[-1]
+    causal_mask = torch.triu(
+        torch.ones(
+            (sequence_length, sequence_length),
+            device=scores.device,
+            dtype=torch.bool,
+        ),
+        diagonal=1,
+    )
+    probabilities = torch.softmax(scores.masked_fill(causal_mask, float("-inf")), dim=-1)
+    return torch.matmul(probabilities, value)
+
+
 def _run_timed(function, warmup, repeats):
     for _ in range(warmup):
         function()
@@ -44,21 +60,46 @@ def _run_timed(function, warmup, repeats):
     return statistics.median(samples), torch.cuda.max_memory_allocated() / (1024**2)
 
 
-def benchmark_case(batch_size, heads, sequence_length, head_dim, dtype, warmup, repeats):
+def benchmark_case(
+    batch_size,
+    heads,
+    sequence_length,
+    head_dim,
+    dtype,
+    warmup,
+    repeats,
+    is_causal,
+):
     shape = (batch_size, heads, sequence_length, head_dim)
     query = torch.randn(shape, device="cuda", dtype=dtype)
     key = torch.randn(shape, device="cuda", dtype=dtype)
     value = torch.randn(shape, device="cuda", dtype=dtype)
 
-    materialized_output = materialized_attention(query, key, value)
-    sdpa_output = functional.scaled_dot_product_attention(query, key, value)
-    torch.testing.assert_close(materialized_output, sdpa_output, rtol=5e-2, atol=5e-2)
+    functions = {
+        "materialized": lambda: materialized_attention(query, key, value)
+        if not is_causal
+        else materialized_attention_causal(query, key, value),
+        "sdpa": lambda: functional.scaled_dot_product_attention(
+            query, key, value, is_causal=is_causal
+        ),
+    }
+    outputs = {}
+    for implementation, function in functions.items():
+        try:
+            outputs[implementation] = function()
+        except RuntimeError as error:
+            if "out of memory" not in str(error).lower():
+                raise
+            torch.cuda.empty_cache()
 
     results = []
-    for implementation, function in (
-        ("materialized", lambda: materialized_attention(query, key, value)),
-        ("sdpa", lambda: functional.scaled_dot_product_attention(query, key, value)),
-    ):
+    if len(outputs) == 2:
+        torch.testing.assert_close(
+            outputs["materialized"], outputs["sdpa"], rtol=5e-2, atol=5e-2
+        )
+
+    flops = 4 * batch_size * heads * sequence_length**2 * head_dim
+    for implementation, function in functions.items():
         try:
             milliseconds, peak_memory_mb = _run_timed(function, warmup, repeats)
             results.append(
@@ -66,7 +107,9 @@ def benchmark_case(batch_size, heads, sequence_length, head_dim, dtype, warmup, 
                     "implementation": implementation,
                     "status": "ok",
                     "median_ms": f"{milliseconds:.6f}",
+                    "tflops": f"{flops / (milliseconds * 1e9):.6f}",
                     "peak_memory_mb": f"{peak_memory_mb:.3f}",
+                    "causal": is_causal,
                 }
             )
         except RuntimeError as error:
@@ -78,7 +121,9 @@ def benchmark_case(batch_size, heads, sequence_length, head_dim, dtype, warmup, 
                     "implementation": implementation,
                     "status": "oom",
                     "median_ms": "",
+                    "tflops": "",
                     "peak_memory_mb": "",
+                    "causal": is_causal,
                 }
             )
     return results
@@ -87,13 +132,25 @@ def benchmark_case(batch_size, heads, sequence_length, head_dim, dtype, warmup, 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=Path("benchmarks/results/flash_attention.csv"))
-    parser.add_argument("--sequence-lengths", type=int, nargs="+", default=[128, 256, 512, 1024, 2048, 4096])
+    parser.add_argument(
+        "--sequence-lengths",
+        type=int,
+        nargs="+",
+        default=[128, 256, 512, 1024, 2048, 4096, 8192, 16384],
+    )
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--heads", type=int, default=8)
     parser.add_argument("--head-dim", type=int, default=64)
     parser.add_argument("--dtype", choices=("float16", "bfloat16"), default="float16")
     parser.add_argument("--warmup", type=int, default=10)
     parser.add_argument("--repeats", type=int, default=30)
+    parser.add_argument(
+        "--modes",
+        nargs="+",
+        choices=("noncausal", "causal"),
+        default=("noncausal", "causal"),
+        help="attention modes to benchmark",
+    )
     args = parser.parse_args()
 
     if not torch.cuda.is_available():
@@ -108,47 +165,53 @@ def main():
 
     for sequence_length in args.sequence_lengths:
         print(f"benchmarking sequence length {sequence_length}")
-        try:
-            case_results = benchmark_case(
-                args.batch_size,
-                args.heads,
-                sequence_length,
-                args.head_dim,
-                dtype,
-                args.warmup,
-                args.repeats,
-            )
-        except RuntimeError as error:
-            if "out of memory" not in str(error).lower():
-                raise
-            torch.cuda.empty_cache()
-            case_results = [
-                {
-                    "implementation": implementation,
-                    "status": "oom",
-                    "median_ms": "",
-                    "peak_memory_mb": "",
-                }
-                for implementation in ("materialized", "sdpa")
-            ]
+        for mode in args.modes:
+            is_causal = mode == "causal"
+            try:
+                case_results = benchmark_case(
+                    args.batch_size,
+                    args.heads,
+                    sequence_length,
+                    args.head_dim,
+                    dtype,
+                    args.warmup,
+                    args.repeats,
+                    is_causal,
+                )
+            except RuntimeError as error:
+                if "out of memory" not in str(error).lower():
+                    raise
+                torch.cuda.empty_cache()
+                flops = 4 * args.batch_size * args.heads * sequence_length**2 * args.head_dim
+                case_results = [
+                    {
+                        "implementation": implementation,
+                        "status": "oom",
+                        "median_ms": "",
+                        "tflops": "",
+                        "peak_memory_mb": "",
+                        "causal": is_causal,
+                    }
+                    for implementation in ("materialized", "sdpa")
+                ]
 
-        for result in case_results:
-            rows.append(
-                {
-                    "gpu": device_name,
-                    "platform": platform.platform(),
-                    "pytorch": torch.__version__,
-                    "cuda": torch.version.cuda or "",
-                    "batch_size": args.batch_size,
-                    "heads": args.heads,
-                    "sequence_length": sequence_length,
-                    "head_dim": args.head_dim,
-                    "dtype": args.dtype,
-                    "warmup": args.warmup,
-                    "repeats": args.repeats,
-                    **result,
-                }
-            )
+            for result in case_results:
+                rows.append(
+                    {
+                        "gpu": device_name,
+                        "platform": platform.platform(),
+                        "pytorch": torch.__version__,
+                        "cuda": torch.version.cuda or "",
+                        "batch_size": args.batch_size,
+                        "heads": args.heads,
+                        "sequence_length": sequence_length,
+                        "head_dim": args.head_dim,
+                        "dtype": args.dtype,
+                        "warmup": args.warmup,
+                        "repeats": args.repeats,
+                        **result,
+                    }
+                )
 
     fieldnames = list(rows[0])
     with args.output.open("w", newline="") as output_file:
