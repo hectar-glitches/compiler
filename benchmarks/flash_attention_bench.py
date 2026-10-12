@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import argparse
 import csv
+import os
 import platform
 import statistics
+import subprocess
 import time
 from pathlib import Path
 
@@ -59,6 +61,20 @@ def _run_timed(function, warmup, repeats):
         samples.append(start_event.elapsed_time(end_event))
 
     return statistics.median(samples), torch.cuda.max_memory_allocated() / (1024**2)
+
+
+def _git_sha():
+    try:
+        return subprocess.run(
+            ("git", "rev-parse", "HEAD"),
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise RuntimeError(
+            "Unable to record git_sha; run the benchmark from a Git checkout"
+        ) from error
 
 
 def benchmark_case(
@@ -169,6 +185,8 @@ def main():
     dtype = torch.float16 if args.dtype == "float16" else torch.bfloat16
     args.output.parent.mkdir(parents=True, exist_ok=True)
     device_name = torch.cuda.get_device_name(0)
+    git_sha = _git_sha()
+    allocator_config = os.environ.get("PYTORCH_CUDA_ALLOC_CONF", "")
     rows = []
 
     for sequence_length in args.sequence_lengths:
@@ -209,6 +227,8 @@ def main():
                 rows.append(
                     {
                         "gpu": device_name,
+                        "git_sha": git_sha,
+                        "pytorch_cuda_alloc_conf": allocator_config,
                         "platform": platform.platform(),
                         "pytorch": torch.__version__,
                         "cuda": torch.version.cuda or "",
