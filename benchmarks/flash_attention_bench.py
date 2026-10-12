@@ -84,6 +84,7 @@ def benchmark_case(
         ),
     }
     outputs = {}
+    output_errors = {}
     for implementation, function in functions.items():
         try:
             outputs[implementation] = function()
@@ -91,6 +92,7 @@ def benchmark_case(
             if "out of memory" not in str(error).lower():
                 raise
             torch.cuda.empty_cache()
+            output_errors[implementation] = str(error)
 
     results = []
     if len(outputs) == 2:
@@ -110,6 +112,7 @@ def benchmark_case(
                     "tflops": f"{flops / (milliseconds * 1e9):.6f}",
                     "peak_memory_mb": f"{peak_memory_mb:.3f}",
                     "causal": is_causal,
+                    "error": "",
                 }
             )
         except RuntimeError as error:
@@ -124,6 +127,7 @@ def benchmark_case(
                     "tflops": "",
                     "peak_memory_mb": "",
                     "causal": is_causal,
+                    "error": output_errors.get(implementation, str(error)),
                 }
             )
     return results
@@ -191,6 +195,7 @@ def main():
                         "tflops": "",
                         "peak_memory_mb": "",
                         "causal": is_causal,
+                        "error": str(error),
                     }
                     for implementation in ("materialized", "sdpa")
                 ]

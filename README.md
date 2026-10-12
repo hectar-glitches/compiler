@@ -206,7 +206,31 @@ memory, and achieved TFLOP/s using `4 * batch * heads * sequence_length^2 *
 head_dim` FLOPs. It verifies the outputs and writes the GPU, PyTorch/CUDA
 versions, tensor dimensions, dtype, warmup count, repeat count, and causal
 mode into the CSV. Sequence lengths that exceed the available GPU memory are
-recorded as `oom` instead of terminating the whole sweep.
+recorded as `oom` instead of terminating the whole sweep, with the CUDA
+exception text saved in the `error` column.
+
+The checked-in [T4 results](benchmarks/results/flash_attention.csv) use
+batch size 1, 8 heads, head dimension 64, FP16, 10 warmups, and 30 timed
+repetitions. At sequence length 4096 in non-causal mode:
+
+| Implementation | Median latency | Peak memory | TFLOP/s |
+|---|---:|---:|---:|
+| Materialized | 9.240 ms | 544.125 MiB | 3.718 |
+| SDPA | 2.626 ms | 32.125 MiB | 13.087 |
+
+That is 3.52x lower latency and 16.93x lower peak allocated memory for SDPA.
+At 8192, both implementations still complete: materialized attention uses
+2104.125 MiB and SDPA uses 56.125 MiB in non-causal mode. At 16384,
+non-causal materialized attention completes at 8296.125 MiB, while causal
+materialized attention records `oom`; SDPA completes in both modes. The
+checked-in CSV is the original Kaggle export and therefore predates the
+`error` column; rerun the 16384 causal case with the updated script to capture
+the exception text.
+
+The CSV uses the full-matrix FLOP formula for every row. Causal TFLOP/s
+values should therefore be described as effective TFLOP/s; they are not a
+claim that the causal kernel performed the full non-causal amount of useful
+work.
 
 The unit tests build `Graph`/instruction objects directly. The FX front end
 and end-to-end CLI require PyTorch.
