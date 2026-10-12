@@ -1,15 +1,14 @@
 """
-An accelerator instruction set: one compute core, one on-chip
-buffer, one off-chip memory. Scoped this way because the goal is
-# measuring the off-chip memory traffic that fusion avoids
+Instruction definitions for the modeled accelerator memory and compute
+pipeline.
 
 
-- `Load(tensor_name, size_bytes)` — bring a tensor from off-chip memory
+- `Load(tensor_name, size_bytes)` — copy a tensor from off-chip memory
   into the on-chip buffer.
 - `Store(tensor_name, size_bytes)` — write a tensor from the on-chip
   buffer back to off-chip memory.
 - `Compute(op_type, input_names, output_name, output_size_bytes, flops, sub_ops=None)`
-  — perform one operation using operands already in the on-chip buffer,
+  — execute one operation using operands already in the on-chip buffer,
   producing a result in the on-chip buffer.
 
 """

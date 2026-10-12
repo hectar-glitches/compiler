@@ -1,7 +1,5 @@
 """
-My own IR: a flat list of typed operations over named tensors, roughly
-analogous to what torch.fx or an ONNX graph gives you, but simplified to
-exactly what we need.
+Intermediate representation for typed operations over named tensors.
 
 """
 from __future__ import annotations

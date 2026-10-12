@@ -1,15 +1,12 @@
 """
-Simulator: executes a list of ISA instructions two ways at once --
-functionally (real numpy arrays, so you can verify correctness) and as a
-cycle-cost estimate (using the HardwareConfig cost model).
+Execute an ISA instruction stream functionally with NumPy while accumulating
+the corresponding hardware-model cycle estimate.
 
-Why both: a cycle count with no correctness check is easy to get
-"impressively" wrong. Verifying the fused and unfused pipelines produce
-bit-identical numeric output is what makes the speedup claim trustworthy
--- you're not measuring two different computations, you're measuring two
-schedules of the same one.
+The functional result and cycle estimate share the same instruction stream,
+so performance comparisons also verify that the schedules compute the same
+operation.
 
-Functions/classes to implement:
+The `Simulator` maintains:
 
 - `Simulator` class:
     - holds an on-chip buffer, modeled as a dict[str, np.ndarray]
@@ -33,12 +30,8 @@ Functions/classes to implement:
         Return the final off-chip memory contents (or the graph's
         output tensor) and the total cycle count.
 
-Compute dispatches from op_type strings ("add", "relu", "matmul")
-to NumPy implementations.
-to numpy-based implementations, that both codegen.py and simulator.py can
-share, so "what does the op X actually compute" is defined in exactly one
-place. For a fused Compute instruction (multiple op_types), apply them in
-sequence to the same buffer.
+Compute dispatches from operation names to NumPy implementations. A fused
+Compute instruction applies its sub-operation sequence to the same buffer.
 """
 
 import numpy as np

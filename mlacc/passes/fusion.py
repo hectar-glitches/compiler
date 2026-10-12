@@ -1,18 +1,9 @@
 """
 Elementwise operator fusion pass.
 
-Input: a Graph with individual ops (e.g. matmul -> add -> relu, as three
-separate Ops each with their own output tensor).
-
-Output: a new Graph where consecutive, single-consumer, elementwise ops
-are merged into one "fused" Op. E.g. `add -> relu` (both elementwise,
-add's output consumed only by relu) becomes a single Op with
-op_type="fused_elementwise" and some way of recording the sub-operations
-it performs (a list, e.g. ["add", "relu"], stored whichever way makes
-sense given your Op design -- you may need to extend Op with an optional
-field for this, which is a reasonable and expected change to make here).
-
-- `fuse_elementwise(graph: Graph) -> Graph` — the main entry point.
+The pass returns a new Graph. Consecutive, single-consumer elementwise
+operations such as `add -> relu` become one `fused_elementwise` operation
+with the original sub-operation sequence recorded.
 
 """
 
