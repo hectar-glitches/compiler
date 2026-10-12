@@ -42,6 +42,7 @@ def materialized_attention_causal(query, key, value):
 
 
 def _run_timed(function, warmup, repeats):
+    torch.cuda.empty_cache()
     for _ in range(warmup):
         function()
     torch.cuda.synchronize()
@@ -99,6 +100,8 @@ def benchmark_case(
         torch.testing.assert_close(
             outputs["materialized"], outputs["sdpa"], rtol=5e-2, atol=5e-2
         )
+    del outputs
+    torch.cuda.empty_cache()
 
     flops = 4 * batch_size * heads * sequence_length**2 * head_dim
     for implementation, function in functions.items():
@@ -115,6 +118,7 @@ def benchmark_case(
                     "error": "",
                 }
             )
+            torch.cuda.empty_cache()
         except RuntimeError as error:
             if "out of memory" not in str(error).lower():
                 raise
@@ -171,6 +175,7 @@ def main():
         print(f"benchmarking sequence length {sequence_length}")
         for mode in args.modes:
             is_causal = mode == "causal"
+            torch.cuda.empty_cache()
             try:
                 case_results = benchmark_case(
                     args.batch_size,
