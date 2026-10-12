@@ -220,11 +220,17 @@ The script compares explicitly materialized attention against
 `torch.nn.functional.scaled_dot_product_attention`, runs both non-causal and
 causal modes by default, and reports median latency, peak allocated GPU
 memory, and achieved TFLOP/s using `4 * batch * heads * sequence_length^2 *
-head_dim` FLOPs. It verifies the outputs and writes the GPU, PyTorch/CUDA
-versions, tensor dimensions, dtype, warmup count, repeat count, and causal
-mode into the CSV. Sequence lengths that exceed the available GPU memory are
+head_dim` FLOPs. Peak allocated GPU memory means the maximum memory allocated
+by one attention call, including the Q/K/V and output tensors; the peak
+counter is reset before each measured case. It verifies the outputs and
+writes the GPU, Git commit, allocator configuration, PyTorch/CUDA versions,
+tensor dimensions, dtype, warmup count, repeat count, and causal mode into the
+CSV. Sequence lengths that exceed the available GPU memory are
 recorded as `oom` instead of terminating the whole sweep, with the CUDA
-exception text saved in the `error` column.
+exception text saved in the `error` column. The benchmark releases comparison
+outputs and calls `torch.cuda.empty_cache()` between implementations and
+sequence-length/mode cases so cached allocator blocks are available for the
+next measurement.
 
 The checked-in [T4 results](benchmarks/results/flash_attention.csv) use
 batch size 1, 8 heads, head dimension 64, FP16, 10 warmups, and 30 timed
@@ -232,17 +238,26 @@ repetitions. At sequence length 4096 in non-causal mode:
 
 | Implementation | Median latency | Peak memory | TFLOP/s |
 |---|---:|---:|---:|
-| Materialized | 9.240 ms | 544.125 MiB | 3.718 |
-| SDPA | 2.626 ms | 32.125 MiB | 13.087 |
+| Materialized | 9.162 ms | 544.125 MiB | 3.750 |
+| SDPA | 2.591 ms | 32.125 MiB | 13.261 |
 
-That is 3.52x lower latency and 16.93x lower peak allocated memory for SDPA.
+That is 3.54x lower latency and 16.94x lower peak allocated memory for SDPA.
 At 8192, both implementations still complete: materialized attention uses
 2104.125 MiB and SDPA uses 56.125 MiB in non-causal mode. At 16384,
 non-causal materialized attention completes at 8296.125 MiB, while causal
 materialized attention records `oom`; SDPA completes in both modes. The
-checked-in CSV is the original Kaggle export and therefore predates the
-`error` column; rerun the 16384 causal case with the updated script to capture
-the exception text.
+causal materialized failure tried to allocate another 4.00 GiB on a T4 with
+2.11 GiB free, while 3.98 GiB was reserved but unallocated by PyTorch. This
+is consistent with allocator fragmentation while roughly 12.3 GiB of live
+tensors were already present; it is not evidence that the live tensors alone
+exceeded the T4's 14.56 GiB capacity.
+
+The checked-in CSV is the v2 Kaggle export, including the `error` column. It
+predates the `git_sha` and `pytorch_cuda_alloc_conf` provenance columns; new
+runs include both. A clean-allocator rerun with
+`PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` would distinguish
+fragmentation from a hard capacity limit. A 32768 run would provide a separate
+capacity-wall experiment; it has not been run from this machine.
 
 The CSV uses the full-matrix FLOP formula for every row. Causal TFLOP/s
 values should therefore be described as effective TFLOP/s; they are not a
