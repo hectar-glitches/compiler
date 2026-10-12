@@ -182,6 +182,30 @@ matmul ladder. Results are local measurements on Apple Silicon; NumPy uses
 the platform's optimized Accelerate/BLAS implementation and is intentionally
 not included in the C++-only comparison chart.
 
+## CUDA attention benchmark
+
+The standalone CUDA benchmark is in
+[`benchmarks/flash_attention_bench.py`](benchmarks/flash_attention_bench.py).
+It is designed to run in Kaggle or Colab and does not affect the local
+simulator demo in `mlacc/main.py`.
+
+In a GPU notebook:
+
+```bash
+git clone https://github.com/hectar-glitches/compiler.git
+cd compiler
+pip install -r requirements.txt
+python benchmarks/flash_attention_bench.py \
+  --output benchmarks/results/flash_attention.csv
+```
+
+The script compares explicitly materialized attention against
+`torch.nn.functional.scaled_dot_product_attention`, records median latency and
+peak allocated GPU memory, verifies the outputs, and writes the GPU,
+PyTorch/CUDA versions, tensor dimensions, dtype, warmup count, and repeat
+count into the CSV. Sequence lengths that exceed the available GPU memory are
+recorded as `oom` instead of terminating the whole sweep.
+
 The unit tests build `Graph`/instruction objects directly. The FX front end
 and end-to-end CLI require PyTorch.
 
